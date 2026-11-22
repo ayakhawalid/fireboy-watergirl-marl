@@ -14,11 +14,17 @@ Two agents with different abilities (Pink and Dude) must cooperate to finish a
 Fireboy-and-Watergirl-style level. We compare three multi-agent RL approaches
 and analyse how well, and how fast, they learn to cooperate.
 
+**Cooperation must be required, not optional.** As we wrote to the lecturer, the
+level is designed so that neither agent can finish alone: for example, one agent
+must **hold a button** while the other passes a door, and each agent dies in the
+other's element.
+
 **Main research question:** how do independent learning (IPPO), a shared policy,
 and centralised training (MAPPO) compare on a cooperative task with sparse
 rewards and agents that have different abilities?
 
 **Follow-up questions:**
+- How much harder is forced cooperation than a level each agent can solve alone? (E6, must)
 - How much does reward shaping matter? (E3, must)
 - How much harder is the physics version than a grid version of the same level? (E4, must)
 - Do the agents generalise to levels they never trained on? (E5, nice to have)
@@ -48,6 +54,8 @@ than real robots (perfect observations, deterministic physics, no sensor noise).
 
 ### What is new in this project
 
+- **Forced, real-time cooperation:** a level that neither agent can finish alone,
+  with hold buttons (one agent waits while the other moves).
 - **True two-agent RL** on a Fireboy-and-Watergirl-style game with real platformer
   physics. The closest existing work (AyushG225/FireboyWatergirlRL) controls both
   characters with one policy and relies on imitation learning.
@@ -73,6 +81,68 @@ than real robots (perfect observations, deterministic physics, no sensor noise).
 - `fbwg/world.py` runs without a window at about 10,000–30,000 game ticks per
   second, and is deterministic (the same inputs always give the same result).
 
+**Missing: forced cooperation.** The original Java game is single-player (you pick
+one hero), so its levels were built for **one hero to finish alone**. In our port
+both heroes play together, but neither one needs the other yet. This has to be
+added (§2b).
+
+---
+
+## 2b. Cooperative level 1 (what we promised the lecturer)
+
+**Game change: hold buttons.** A new button type that opens a door (or moves a
+platform) **only while a hero stands on it**, and closes again when it leaves.
+The original buttons stay as they are (pressed once, platform moves after 4 s and
+back after 8 s).
+
+**New level `levels/01_coop.txt`:** level 1 with one or two changes that make
+cooperation necessary. Ideas:
+
+| Mechanism | How it forces cooperation |
+|---|---|
+| Hold button + door | A hero must stand on the button and wait while the other passes the door |
+| Lever for the partner | A lever only one hero can reach moves a platform the other hero needs |
+| Swapped access | A path only one hero can survive (fire colour); that hero opens a safe route for the other |
+| Two-button gate | A gate opens only while both heroes stand on their buttons at the same time |
+
+**Requirements for the level:**
+- neither hero can finish it alone (check by trying to solve it with one hero)
+- it can be solved by both together (check by playing it with the keyboard)
+- the original `01.txt` stays unchanged, as a "no cooperation needed" comparison (E6)
+
+**Why this matters for the report:** prior work (AyushG225/FireboyWatergirlRL) used
+one controller for both heroes and buttons that stay pressed forever once touched.
+Our agents are **separate learners** and must **coordinate in real time** (one
+waits on a button while the other moves).
+
+---
+
+## 2c. Physics version and grid version
+
+We use **the same cooperative level 1 in two versions**:
+
+| | Physics version (main) | Grid version (comparison and backup) |
+|---|---|---|
+| Movement | Smooth, pixel by pixel, gravity and jump arcs (the original game physics) | One tile per step; falls one tile per step without floor; a jump goes up 2 tiles |
+| Actions | stay, left, right, jump, jump-left, jump-right (held for 8 ticks) | stay, left, right, jump |
+| Difficulty | Hard: precise jump timing plus cooperation | Easier: only cooperation and planning |
+| Looks | Like the real game | The same graphics, moving tile by tile |
+| Formal definition | Continuous state | Small discrete state, very clean to define |
+
+**Why both:**
+- The physics version is **more impressive** (harder problem, better demo), but
+  plain PPO may fail on it (AyushG225/FireboyWatergirlRL got 0% without imitation learning).
+- The grid version is **likely to give clear results**, and comparing the two
+  shows how much the continuous dynamics make learning harder (experiment E4).
+- Either way the report has working results and a real finding:
+  - if physics works: strong results on a hard problem, and the grid shows the gap
+  - if physics is hard: grid results plus an analysis of why the physics is harder
+
+**Order:**
+1. Start with the physics version (the game is ready). Build the RL environment and a random-agent test in week 1.
+2. **Week 3 checkpoint:** if no method solves even a simplified physics level 1, the grid version becomes the main environment for E1–E3, and physics moves to E4 only.
+3. The grid version is built by week 6 at the latest (E4), as an extra mode of the same game: same level files, same tiles, same rendering, same RL interface, so all algorithms run on both without changes.
+
 ---
 
 ## 3. Formal definition (draft for the report)
@@ -82,9 +152,9 @@ A fully cooperative two-agent Markov game **M = ⟨N, S, {Aᵢ}, T, R, γ⟩**.
 | Part | Definition |
 |---|---|
 | Agents | N = {Pink, Dude} |
-| State S | Both heroes' positions, velocities, alive / at-door flags; positions of platforms and boxes; lever and button states; which gems are left; time step |
+| State S | Both heroes' positions, velocities, alive / at-door flags; positions of platforms and boxes; lever, button and hold-button states (pressed / not pressed, door open / closed); which gems are left; time step |
 | Actions Aᵢ | 6 per agent: stay, left, right, jump, jump-left, jump-right. Each action is held for 8 game ticks (frame skip), giving 25 decisions per second |
-| Transition T | The game physics (deterministic): gravity, collisions, levers/buttons moving platforms, pushable boxes |
+| Transition T | The game physics (deterministic): gravity, collisions, levers/buttons moving platforms, pushable boxes; a hold-button door is open only while a hero stands on its button |
 | Terminal | A hero touches a deadly fire (Pink: blue/green, Dude: purple/green), both heroes reach their own doors, or the time limit is reached (for example 60 s = 1,500 decisions) |
 | Reward R | Shared team reward, see below |
 | Objective | Maximise E[Σ γᵗ rₜ], γ = 0.99 |
@@ -98,6 +168,7 @@ A fully cooperative two-agent Markov game **M = ⟨N, S, {Aᵢ}, T, R, γ⟩**.
 | A hero dies | −10 |
 | Gem collected | +0.5 |
 | First time a lever or button is used | +1 |
+| Partner passes a door while this agent holds its button (helping) | +1 (to the team) |
 | Progress shaping: closer to own door (path distance on the tile grid) | + small, potential-based |
 | Every decision | −0.001 |
 
@@ -157,10 +228,11 @@ death rate per hero, gems collected, sample efficiency (steps to reach 50% / 90%
 
 | # | Experiment | Priority |
 |---|---|---|
-| E1 | IPPO vs Shared PPO vs MAPPO on level 1 | **Must** |
+| E1 | IPPO vs Shared PPO vs MAPPO on the cooperative level 1 (`01_coop.txt`) | **Must** |
 | E2 | Hyperparameter tuning, see below | **Must** (required by the guideline) |
 | E3 | Reward shaping and curriculum ablation: sparse reward vs shaped reward, with vs without curriculum | **Must** |
 | E4 | Physics version vs a simple grid version of level 1 (also the backup plan, see §8) | **Must** |
+| E6 | Original level 1 (each hero can finish alone) vs cooperative level 1: how much harder is forced cooperation, and which method handles it best? | **Must** |
 | E5 | Extra generated levels: train on some, test on unseen ones (generator ideas adapted from AyushG225/FireboyWatergirlRL, with credit) | Nice to have |
 
 ### Hyperparameter search (E2)
@@ -193,12 +265,12 @@ Tools: a small script of our own, or Optuna. Log everything with TensorBoard or 
 
 | Week | Goal | Done when |
 |---|---|---|
-| 1 | Everyone runs the game; read the code; build the RL environment (PettingZoo) with actions, observations, rewards | A random agent runs 1,000 episodes with no errors |
+| 1 | Everyone runs the game; read the code; build the RL environment (PettingZoo) with actions, observations, rewards; **add hold buttons and design `01_coop.txt`** | A random agent runs 1,000 episodes with no errors; the coop level is solvable by two players with the keyboard but not by one |
 | 2 | First training: IPPO on a simplified level 1 (for example fires removed) | The learning curve goes up |
-| 3 | Full level 1; curriculum from easy to full; Shared PPO | At least one method sometimes solves level 1 |
+| 3 | Full cooperative level 1; curriculum from easy to full; Shared PPO | At least one method sometimes solves the cooperative level |
 | 4 | MAPPO; all 3 methods with 5 seeds (E1) | E1 results and plots |
 | 5 | Hyperparameter search (E2); reward shaping and curriculum ablation (E3) | E2 and E3 results |
-| 6 | Grid version and physics vs grid comparison (E4); behaviour analysis and videos; start the report | E4 results, draft report |
+| 6 | Grid version and physics vs grid comparison (E4); original vs cooperative level (E6); behaviour analysis and videos; start the report | E4 and E6 results, draft report |
 | 7 | Finish the report and presentation; clean the code; make results reproducible; E5 only if there is time | Submitted |
 
 **Checkpoint at the end of week 3:** if no method solves even a simplified
@@ -211,7 +283,7 @@ level 1, switch the main experiments to the grid version (see §8).
 | Person | Main responsibility | Also |
 |---|---|---|
 | **Boshra** | RL environment: PettingZoo wrapper, observations, actions | Unit tests for the environment |
-| **Aya** | Rewards and curriculum (easier level variants), extra levels | Repository management, README |
+| **Aya** | Cooperative level 1 and hold buttons (with help from Boshra); rewards and curriculum (easier level variants), extra levels | Repository management, README |
 | **Firas** | Algorithms: IPPO and Shared PPO | Logging (TensorBoard), plots |
 | **Mohamed** | Algorithms: MAPPO | Experiment runs (seeds, tuning), videos |
 | **Everyone** | Report sections for their own part; presentation | Review each other's pull requests |
@@ -263,7 +335,9 @@ level 1, switch the main experiments to the grid version (see §8).
 - **dylanroman03/FireAndWater-Game** (MIT): the original Java game. Our game is a Python port of it.
 - **AyushG225/FireboyWatergirlRL** (MIT): an RL project on a similar game that controls
   **both characters with one policy** and needed imitation learning; plain PPO solved 0% of
-  its levels. **Our difference:** true multi-agent RL with two separate agents.
+  its levels. Its "temple" levels have cooperative gates, but buttons stay pressed once
+  touched. **Our difference:** two separately learning agents, and cooperation that needs
+  real-time coordination (holding a button while the partner passes).
 - MAPPO: Yu et al., *The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games* (2022).
 - PPO: Schulman et al., *Proximal Policy Optimization Algorithms* (2017).
 - IPPO: de Witt et al., *Is Independent Learning All You Need in the StarCraft Multi-Agent Challenge?* (2020).
@@ -279,6 +353,8 @@ level 1, switch the main experiments to the grid version (see §8).
 - [ ] Everyone: clone the repo and run `python play.py`
 - [ ] Everyone: play level 1 together and write down how it is solved (this helps with rewards)
 - [ ] Boshra: start the PettingZoo environment
-- [ ] Aya: an easy version of level 1 (for example `levels/01_easy.txt` without fires)
+- [ ] Everyone: design the cooperative level 1 together (which of the mechanisms in §2b)
+- [ ] Aya + Boshra: add hold buttons to the game and create `levels/01_coop.txt`; check one hero alone cannot finish it
+- [ ] Aya: an easy version of the cooperative level (for example `levels/01_coop_easy.txt` without fires)
 - [ ] Firas + Mohamed: set up a PPO training script and test it on a simple Gymnasium task (for example CartPole)
-- [ ] Aya: send the lecturer one line saying we switched from a grid to the physics version of the same idea
+- [ ] Aya: send the lecturer one line: we use a physics-based version of the game (with a grid version for comparison), and the level requires cooperation (holding buttons), as proposed
