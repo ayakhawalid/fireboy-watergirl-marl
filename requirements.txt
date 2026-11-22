@@ -1,0 +1,1 @@
+pygame>=2.5  # on Python 3.14, use pygame-ce instead if pygame does not install
